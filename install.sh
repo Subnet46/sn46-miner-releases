@@ -40,8 +40,8 @@ fi
 # another key is refused, and the verifier runs only if it is this exact binary. Changing
 # either means publishing a new installer. The SN46_TEST_* overrides exist for the
 # container tests, which sign with a throwaway key.
-RELEASE_PUBLIC_KEY="${SN46_TEST_RELEASE_PUBLIC_KEY:-63605b984a588ed4a1910fe3c205f073232eb580cf5de7de9f1f6e2d5824ec4d}"
-RELEASE_VERIFIER_SHA256="${SN46_TEST_RELEASE_VERIFIER_SHA256:-6408f734695df0466b422d50752368994000ec68d7b1d7f5bfcb4aea31bc2b6a}"
+RELEASE_PUBLIC_KEY="${SN46_TEST_RELEASE_PUBLIC_KEY:-848b6b3ac0770ca74e1d14106922f0cd4273076a38be582ad6a992d48148a6ff}"
+RELEASE_VERIFIER_SHA256="${SN46_TEST_RELEASE_VERIFIER_SHA256:-fc4ce5c6457595daf0813a631d37977e10d1f3f410c15fff37740a182b2ad695}"
 MIN_DRIVER=580
 # The fewest cards any qualified class uses (B300 runs on two) and the least memory any of
 # them has (MiB). An early screen only: the host check matches the exact class and count.
