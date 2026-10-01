@@ -66,14 +66,69 @@ asks nothing, downloads nothing and starts the worker.
 | `sudo sn46-miner stats --period 24h` | local counters over a period |
 | `sudo sn46-miner stop` / `start` / `restart` | control the worker |
 | `sudo sn46-miner update check` | is a newer release published? Never installs anything |
+| `sudo sn46-miner update auto --now` | install a newer release now instead of on schedule |
 | run the install command again | installs a newer release; the previous one stays for `rollback` |
 | `sudo sn46-miner rollback` | go back to the previous release |
 | `sudo sn46-miner configure` | change the uid or hotkey and restart the worker |
 | `sudo sn46-miner diagnostics > bundle.json` | a redacted bundle for a support request |
+| `sudo sn46-miner report --dry-run` | print the fault report this miner would send |
 | `sudo sn46-miner uninstall --confirm` | remove the release and the service; the checkpoint stays |
 
 `--json` gives machine output for `status`, `doctor`, `host-check`, `stats` and
 `update check`.
+
+## Updates
+
+The miner updates itself. Every 15 minutes a timer (`sn46-miner-update.timer`; in a
+container, a small loop the installer starts) checks the signed release index. When a
+newer release is published and its time has come, the updater:
+
+1. downloads and verifies it while the worker keeps serving (an unchanged runtime is
+   reused, so most updates download megabytes, not gigabytes);
+2. drains the worker: the platform stops sending it requests, and it finishes the ones it
+   has. Nothing in flight is cut off; if a request does not finish within 30 minutes the
+   worker takes work again and the update is retried later;
+3. switches to the new release, starts it, and waits until the platform accepts it. If it
+   does not, the previous release comes back, that release is not tried again on this
+   host, and a fault report says why.
+
+Only a release signed with this installation's key and newer than the running one is
+installed. When the disk is too full, the update does not happen and `sudo sn46-miner
+status` says so. Releases other than the current and the previous one are removed.
+
+Settings in `/etc/sn46-miner/worker.env` (restart not needed; the next check reads them):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `SN46_AUTO_UPDATE` | `true` | `false` turns automatic updates off |
+| `SN46_UPDATE_WINDOW` | none | only update inside this daily UTC window, e.g. `02:00-05:00` |
+| `SN46_UPDATE_SPREAD_S` | `7200` | this host installs at a fixed offset of up to this many seconds after a release's time |
+| `SN46_UPDATE_DRAIN_S` | `1800` | how long to wait for open requests before retrying later |
+
+`journalctl -u sn46-miner-update` (or `/var/log/sn46-miner/update.log` in a container)
+shows every decision.
+
+## Fault reports
+
+When the miner hits a fault (a session ends, the backend is restarted, a request or a
+proof fails, the installation is broken, an update rolls back), it sends a short report to the platform,
+signed by its hotkey, so the subnet sees what failed without asking you for logs. It
+never waits on the report and never retries it; at most one report of a kind goes out
+every 10 minutes, and 24 a day.
+
+A report holds: the release, uid and hotkey; the fault's kind, tier and error text; the
+request id it concerns; `status.json`; the service's state and restart count; the GPUs
+as `nvidia-smi` lists them; the last 20 request records (token counts, timings and
+outcomes); the names of the configuration keys; and the last 400 log lines of the worker
+(at `info` and above) and of the backend.
+
+It never holds configuration values, wallet files or keys, prompts, answers, token ids,
+the verification nonce or proof bytes. The websocket and HTTP libraries stay at `info`
+whatever `SN46_LOG_LEVEL` says, because their `trace` output is the raw frames.
+
+`sudo sn46-miner report --dry-run` prints exactly what a report would hold right now.
+To turn reports off, add `SN46_FAULT_REPORTS=false` to
+`/etc/sn46-miner/worker.env` and restart the worker.
 
 ## When something fails
 
@@ -88,3 +143,4 @@ Every failure names what to do. The cases we have met:
 | The installer cannot find the hotkey | Set `SN46_SETUP_HOTKEY_PATH` to the hotkey file and run it again. |
 | `wallet_hotkey` fails | Copy an unencrypted hotkey file to the machine and run `sudo sn46-miner configure`. |
 | `clock` fails | Run `sudo timedatectl set-ntp true`. |
+| `Request failed; the session goes on` | Nothing. The model's answer broke the output contract (it sampled a control or multimodal token, or the stream did not match its decoding). That one request fails and the miner keeps serving. Tool calls and boxed answers are ordinary text and never cause this. |
