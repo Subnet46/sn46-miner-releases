@@ -1,6 +1,6 @@
 # SN46 miner
 
-Serves GLM-5.3-Flash on Subnet 46 and produces the proof evidence the network verifies.
+Serves GLM-5.3-Flash-Uncensored-FP8 (`orcarouter/GLM-5.3-Flash-Uncensored-FP8`) on Subnet 46 and produces the proof evidence the network verifies.
 One machine, one class of GPU, one command to install.
 
 ## Install
@@ -49,6 +49,19 @@ asks nothing, downloads nothing and starts the worker.
 | B300, 288 GB | 2 | 131,072 tokens | Qualified |
 | H200, 141 GB | 4 | 32,768 tokens | Qualified |
 
+### All-reduce and NCCL mode
+
+On RTX PRO 6000 hosts the engine runs FlashInfer's PCIe IPC all-reduce with NCCL's NVLS and
+cuMem off (about 10 % more tokens per second than NCCL's defaults on a PCIe box). It needs
+CUDA peer access between the four cards: `sudo sn46-miner doctor` reports it as `gpu_p2p`,
+and `nvidia-smi topo -m` shows the links. Cards on one PCIe switch (`PIX`, `NODE`) decode
+faster than cards on different sockets (`SYS`). A host whose cards cannot reach each other
+(PCIe ACS, a virtualised layout) runs NCCL safe mode: `configure` writes
+`SN46_NCCL_SAFE=true` when its probe sees a missing pair, and the engine then runs without
+peer transport, NVLS, cuMem or the custom and IPC all-reduces, inside the same proof
+thresholds but slower. B300 and H200 hosts keep NCCL's defaults (H200 hosts run safe mode,
+which `configure` sets by name).
+
 ### Minimal setup
 
 - The cards of one class from the table above, Ubuntu 24.04 with CUDA 13.
@@ -84,7 +97,9 @@ container, a small loop the installer starts) checks the signed release index. W
 newer release is published and its time has come, the updater:
 
 1. downloads and verifies it while the worker keeps serving (an unchanged runtime is
-   reused, so most updates download megabytes, not gigabytes);
+   reused, so most updates download megabytes, not gigabytes; a release with a new
+   runtime, like the one that moved FlashInfer to 0.7.0, downloads about 6 GB once and
+   needs 60 GiB free, and its first start tunes the all-reduce for a minute);
 2. drains the worker: the platform stops sending it requests, and it finishes the ones it
    has. Nothing in flight is cut off; if a request does not finish within 30 minutes the
    worker takes work again and the update is retried later;
@@ -96,11 +111,32 @@ Only a release signed with this installation's key and newer than the running on
 installed. When the disk is too full, the update does not happen and `sudo sn46-miner
 status` says so. Releases other than the current and the previous one are removed.
 
+### A release that changes the model
+
+A release built for another checkpoint (the uncensored `orcarouter/GLM-5.3-Flash-Uncensored-FP8`
+after `zai-org/GLM-5.3-Flash`) is applied by the updater like any other, with the checkpoint
+taken care of. Ahead of the release's time (`SN46_UPDATE_PREPARE_AHEAD_S`, 12 h by default, at
+most 24 h) the updater downloads the new checkpoint while the worker keeps serving the old
+one; `sn46-miner status` shows `prepared`. At the time, the worker drains, the configuration
+switches to the new profile and model path, and the worker restarts on the new release.
+The old checkpoint is kept beside the new one when the volume has room for both (306 GiB plus
+20 GiB free), so a rollback can still serve it; otherwise it is removed before the download.
+A host that cannot hold even one more checkpoint is reported `blocked` and left alone.
+
+This needs the updater of 0.6.1 or later; a 0.6.0 host rolls such a release back and
+`status` says so. Run the install command once instead: it does the same change at once.
+The retired checkpoint is removed when the host cannot hold both, the configuration moves
+to the new profile (the file before is kept as `worker.env.retired`, every other setting
+stays), the checkpoint downloads while the worker keeps serving, and the worker restarts
+on the new release at the end.
+
 Settings in `/etc/sn46-miner/worker.env` (restart not needed; the next check reads them):
 
 | Setting | Default | Meaning |
 |---|---|---|
 | `SN46_AUTO_UPDATE` | `true` | `false` turns automatic updates off |
+| `SN46_UPDATE_PREPARE_AHEAD_S` | `43200` | how long before a release's time a model change's checkpoint is downloaded (at most 86400) |
+| `SN46_NCCL_SAFE` | unset | `true` runs NCCL safe mode (no peer transport, NVLS, cuMem, custom or IPC all-reduce); `configure` sets it when the cards have no peer access |
 | `SN46_UPDATE_WINDOW` | none | only update inside this daily UTC window, e.g. `02:00-05:00` |
 | `SN46_UPDATE_SPREAD_S` | `7200` | this host installs at a fixed offset of up to this many seconds after a release's time |
 | `SN46_UPDATE_DRAIN_S` | `1800` | how long to wait for open requests before retrying later |

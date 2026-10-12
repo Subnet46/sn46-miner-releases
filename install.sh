@@ -193,7 +193,9 @@ else
     python3 -c 'import json, sys
 for a in json.load(open(sys.argv[1]))["assets"]: print(a["name"], a["url"])' "$work/release-api.json" > "$work/assets"
   fi
-  for file in release.json release.sig parts.json; do
+  # release-index.json is the signed index entry the release was published with; the
+  # installed copy is what tells the updater this release's sequence.
+  for file in release.json release.sig parts.json release-index.json; do
     asset "$file" "$release/$file" || die "release $version has no $file"
   done
   # name, mode, sha256 and the parts of every payload file, from the manifest the
