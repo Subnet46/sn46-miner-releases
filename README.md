@@ -141,7 +141,7 @@ Settings in `/etc/sn46-miner/worker.env` (restart not needed; the next check rea
 | `SN46_UPDATE_SPREAD_S` | `7200` | this host installs at a fixed offset of up to this many seconds after a release's time |
 | `SN46_UPDATE_DRAIN_S` | `1800` | how long to wait for open requests before retrying later |
 
-`journalctl -u sn46-miner-update` (or `/var/log/sn46-miner/update.log` in a container)
+`journalctl --namespace=sn46-miner -u sn46-miner-update` (or `/var/log/sn46-miner/update.log` in a container)
 shows every decision.
 
 ## Fault reports
@@ -152,11 +152,10 @@ signed by its hotkey, so the subnet sees what failed without asking you for logs
 never waits on the report and never retries it; at most one report of a kind goes out
 every 10 minutes, and 24 a day.
 
-A report holds: the release, uid and hotkey; the fault's kind, tier and error text; the
-request id it concerns; `status.json`; the service's state and restart count; the GPUs
-as `nvidia-smi` lists them; the last 20 request records (token counts, timings and
-outcomes); the names of the configuration keys; and the last 400 log lines of the worker
-(at `info` and above) and of the backend.
+A report holds the release, uid and hotkey; the fault's kind and tier with a static error
+code; the request id; numeric worker status; the service's state and restart count; GPU
+metadata; the last 20 unexpired request records; and configuration key names. Raw worker
+and backend log lines are never attached.
 
 It never holds configuration values, wallet files or keys, prompts, answers, token ids,
 the verification nonce or proof bytes. The websocket and HTTP libraries stay at `info`
@@ -180,3 +179,20 @@ Every failure names what to do. The cases we have met:
 | `wallet_hotkey` fails | Copy an unencrypted hotkey file to the machine and run `sudo sn46-miner configure`. |
 | `clock` fails | Run `sudo timedatectl set-ntp true`. |
 | `Request failed; the session goes on` | Nothing. The model's answer broke the output contract (it sampled a control or multimodal token, or the stream did not match its decoding). That one request fails and the miner keeps serving. Tool calls and boxed answers are ordinary text and never cause this. |
+
+## Retention
+
+After generation finishes, a fixed 600-second monotonic deadline bounds both waiting for
+`proof_start` and proof production. Progress does not renew it. Expiry cancels the task
+and releases its GPU capture; it does not send a fabricated failed proof. A disconnect
+also drains outstanding tasks and captures.
+
+Statistics and the last per-request status fields expire within 30 days, including on
+idle hosts and before startup. The managed unit uses a separate journal namespace kept
+for three days (`journalctl --namespace=sn46-miner -u sn46-miner`). Container log rotations
+expire after three days and the active file is truncated daily. Serving refuses unsafe
+swap or dump protection; managed engines enforce the same protection after exec.
+
+These safeguards cover the supported software. A miner operator can still inspect
+plaintext while it is processed; this release does not attest an independent host or
+promise forensic RAM/VRAM erasure.
