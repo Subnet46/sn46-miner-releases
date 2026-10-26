@@ -1,6 +1,6 @@
 # SN46 miner
 
-Serves GLM-5.3-Flash-Uncensored-FP8 (`orcarouter/GLM-5.3-Flash-Uncensored-FP8`) on Subnet 46 and produces the proof evidence the network verifies.
+Serves GLM-5.3-Flash-Uncensored (the EXL3 checkpoint, served as `orcarouter/GLM-5.3-Flash-Uncensored-FP8`) on Subnet 46 with TensorFold, and produces the token evidence the network verifies.
 One machine, one class of GPU, one command to install.
 
 ## Install
@@ -11,7 +11,7 @@ curl -fsSL https://raw.githubusercontent.com/Subnet46/sn46-miner-releases/main/i
 
 The installer checks the machine, downloads the current release and verifies it against
 the signing key built into the installer, asks for your **miner uid** and **hotkey**,
-downloads the 306 GiB checkpoint, starts the worker and waits until the platform accepts
+downloads the 164 GiB checkpoint, starts the worker and waits until the platform accepts
 it. It finds the wallet that holds the hotkey and copies only the hotkey file; the
 coldkey is never needed. Re-running it resumes where it stopped. As root, drop the `sudo`.
 
@@ -35,9 +35,10 @@ asks nothing, downloads nothing and starts the worker.
 ## Requirements
 
 - Ubuntu 24.04 on x86-64, NVIDIA driver 580 or newer, `python3`, the clock in sync.
-- GPUs of one supported class, on one host (see below).
-- 360 GiB free on the install volume for a fresh install: the checkpoint, the release and
-  working space. About 330 GiB stay in use afterwards.
+- Four RTX PRO 6000 Blackwell cards on one host, with CUDA peer access between every pair
+  (see below).
+- 220 GiB free on the install volume for a fresh install: the checkpoint, the release and
+  working space. About 200 GiB stay in use afterwards.
 - A hotkey registered on the subnet, as an unencrypted btcli hotkey file on the machine.
 - Outbound HTTPS. No inbound ports.
 
@@ -45,27 +46,27 @@ asks nothing, downloads nothing and starts the worker.
 
 | GPU class | Cards used | Context served | Status |
 |---|---|---|---|
-| RTX PRO 6000 Blackwell, 96 GB | 4 | 131,072 tokens | Qualified |
-| B300, 288 GB | 2 | 131,072 tokens | Qualified |
-| H200, 141 GB | 4 | 32,768 tokens | Qualified |
+| RTX PRO 6000 Blackwell (Workstation, Server or Max-Q), 96 GB | 4 | 131,072 tokens | Qualified |
 
-### All-reduce and NCCL mode
+Other cards are refused: the token check compares the miner's numbers with a verifier's bit
+for bit, and only this class reproduces them.
 
-On RTX PRO 6000 hosts the engine runs FlashInfer's PCIe IPC all-reduce with NCCL's NVLS and
-cuMem off (about 10 % more tokens per second than NCCL's defaults on a PCIe box). It needs
-CUDA peer access between the four cards: `sudo sn46-miner doctor` reports it as `gpu_p2p`,
-and `nvidia-smi topo -m` shows the links. Cards on one PCIe switch (`PIX`, `NODE`) decode
-faster than cards on different sockets (`SYS`). A host whose cards cannot reach each other
-(PCIe ACS, a virtualised layout) runs NCCL safe mode: `configure` writes
-`SN46_NCCL_SAFE=true` when its probe sees a missing pair, and the engine then runs without
-peer transport, NVLS, cuMem or the custom and IPC all-reduces, inside the same proof
-thresholds but slower. B300 and H200 hosts keep NCCL's defaults (H200 hosts run safe mode,
-which `configure` sets by name).
+### Card-to-card exchange and the speed floor
+
+The engine exchanges each layer's partial results between the four cards directly over
+PCIe, so it needs CUDA peer access between every pair: `sudo sn46-miner doctor` reports it
+as `gpu_p2p`, and `nvidia-smi topo -m` shows the links. A host whose cards cannot reach each
+other (PCIe ACS, a virtualised layout) is refused at install, with the pair named. At every
+start the engine times each way of exchanging (direct stores, copy engines, NCCL) at the
+sizes decoding uses and keeps the fastest per size; the start log and the doctor show the
+choice. The worker then measures the host (decode speed on a short and a 10k-token prompt,
+time to the first token) and the platform admits it only at 240 tokens per second or more
+with the first token within 1.5 s; `sudo sn46-miner qualify` repeats the measurement.
 
 ### Minimal setup
 
-- The cards of one class from the table above, Ubuntu 24.04 with CUDA 13.
-- 450 GB of disk that keeps file permissions. On RunPod, a 450 GB container disk and
+- Four RTX PRO 6000 cards with peer access, Ubuntu 24.04 with CUDA 13.
+- 300 GB of disk that keeps file permissions. On RunPod, a 300 GB container disk and
   `SN46_ROOT=/sn46`; the installer refuses a volume that ignores permissions.
 - The hotkey on the machine before installing, under `~/.bittensor/wallets`.
 
@@ -76,6 +77,7 @@ which `configure` sets by name).
 | `sudo sn46-miner status` | phase, readiness, requests served and failed |
 | `sudo sn46-miner logs -f` | follow the worker log |
 | `sudo sn46-miner doctor` | every check the worker needs, with a fix for each failure |
+| `sudo sn46-miner qualify` | measure the host again: decode speed, time to the first token, the exchange chosen |
 | `sudo sn46-miner stats --period 24h` | local counters over a period |
 | `sudo sn46-miner stop` / `start` / `restart` | control the worker |
 | `sudo sn46-miner update check` | is a newer release published? Never installs anything |
@@ -98,8 +100,8 @@ newer release is published and its time has come, the updater:
 
 1. downloads and verifies it while the worker keeps serving (an unchanged runtime is
    reused, so most updates download megabytes, not gigabytes; a release with a new
-   runtime, like the one that moved FlashInfer to 0.7.0, downloads about 6 GB once and
-   needs 60 GiB free, and its first start tunes the all-reduce for a minute);
+   runtime, like the one that moved to TensorFold, downloads about 5 GB once and needs
+   60 GiB free, and its first start builds the engine's kernels for a few minutes);
 2. drains the worker: the platform stops sending it requests, and it finishes the ones it
    has. Nothing in flight is cut off; if a request does not finish within 30 minutes the
    worker takes work again and the update is retried later;
@@ -113,14 +115,13 @@ status` says so. Releases other than the current and the previous one are remove
 
 ### A release that changes the model
 
-A release built for another checkpoint (the uncensored `orcarouter/GLM-5.3-Flash-Uncensored-FP8`
-after `zai-org/GLM-5.3-Flash`) is applied by the updater like any other, with the checkpoint
+A release built for another checkpoint (the EXL3 checkpoint after the FP8 one) is applied by the updater like any other, with the checkpoint
 taken care of. Ahead of the release's time (`SN46_UPDATE_PREPARE_AHEAD_S`, 12 h by default, at
 most 24 h) the updater downloads the new checkpoint while the worker keeps serving the old
 one; `sn46-miner status` shows `prepared`. At the time, the worker drains, the configuration
 switches to the new profile and model path, and the worker restarts on the new release.
-The old checkpoint is kept beside the new one when the volume has room for both (306 GiB plus
-20 GiB free), so a rollback can still serve it; otherwise it is removed before the download.
+The old checkpoint is kept beside the new one when the volume has room for both (the new
+checkpoint plus 20 GiB free), so a rollback can still serve it; otherwise it is removed before the download.
 A host that cannot hold even one more checkpoint is reported `blocked` and left alone.
 
 This needs the updater of 0.6.1 or later; a 0.6.0 host rolls such a release back and
@@ -136,7 +137,6 @@ Settings in `/etc/sn46-miner/worker.env` (restart not needed; the next check rea
 |---|---|---|
 | `SN46_AUTO_UPDATE` | `true` | `false` turns automatic updates off |
 | `SN46_UPDATE_PREPARE_AHEAD_S` | `43200` | how long before a release's time a model change's checkpoint is downloaded (at most 86400) |
-| `SN46_NCCL_SAFE` | unset | `true` runs NCCL safe mode (no peer transport, NVLS, cuMem, custom or IPC all-reduce); `configure` sets it when the cards have no peer access |
 | `SN46_UPDATE_WINDOW` | none | only update inside this daily UTC window, e.g. `02:00-05:00` |
 | `SN46_UPDATE_SPREAD_S` | `7200` | this host installs at a fixed offset of up to this many seconds after a release's time |
 | `SN46_UPDATE_DRAIN_S` | `1800` | how long to wait for open requests before retrying later |
@@ -178,6 +178,8 @@ Every failure names what to do. The cases we have met:
 | The installer cannot find the hotkey | Set `SN46_SETUP_HOTKEY_PATH` to the hotkey file and run it again. |
 | `wallet_hotkey` fails | Copy an unencrypted hotkey file to the machine and run `sudo sn46-miner configure`. |
 | `clock` fails | Run `sudo timedatectl set-ntp true`. |
+| `host fault swap_charge` in the log (the miner exits 75 and is retried every minute) | Processes that are gone left swapped memory charged to the container's cgroup, so the miner cannot show it will not swap. It starts once the charge drains; restarting the container clears it at once. |
+| The miner refuses to start: `cannot resolve own cgroup-v2 mount` or `active host swap is not blocked` | The host has swap and no cgroup v2 limit on it (a cgroup v1 container host, or swap not disabled for the container). Use a host without swap, or one whose container runtime sets the swap limit to 0 on cgroup v2. |
 | `Request failed; the session goes on` | Nothing. The model's answer broke the output contract (it sampled a control or multimodal token, or the stream did not match its decoding). That one request fails and the miner keeps serving. Tool calls and boxed answers are ordinary text and never cause this. |
 
 ## Retention

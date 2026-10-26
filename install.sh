@@ -43,14 +43,14 @@ fi
 RELEASE_PUBLIC_KEY="${SN46_TEST_RELEASE_PUBLIC_KEY:-848b6b3ac0770ca74e1d14106922f0cd4273076a38be582ad6a992d48148a6ff}"
 RELEASE_VERIFIER_SHA256="${SN46_TEST_RELEASE_VERIFIER_SHA256:-fc4ce5c6457595daf0813a631d37977e10d1f3f410c15fff37740a182b2ad695}"
 MIN_DRIVER=580
-# The fewest cards any qualified class uses (B300 runs on two) and the least memory any of
-# them has (MiB). An early screen only: the host check matches the exact class and count.
-GPUS_NEEDED=2
+# The cards the qualified class runs on (four RTX PRO 6000) and the least memory each has
+# (MiB). An early screen only: the host check matches the exact class and count.
+GPUS_NEEDED=4
 MIN_GPU_MIB=$((90 * 1024))
-# Free space a fresh install needs on the install volume: the 306 GiB checkpoint, the
-# release twice while it is staged (2 × 6 GiB), its unpacked runtime (18 GiB) and 20 GiB
+# Free space a fresh install needs on the install volume: the 164 GiB checkpoint, the
+# release twice while it is staged (2 × 5 GiB), its unpacked runtime (9 GiB) and 20 GiB
 # of state and compiled kernels.
-FRESH_GIB=360
+FRESH_GIB=220
 RELEASE_GIB=50
 
 if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != dumb ]]; then
