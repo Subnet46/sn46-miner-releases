@@ -60,8 +60,8 @@ other (PCIe ACS, a virtualised layout) is refused at install, with the pair name
 start the engine times each way of exchanging (direct stores, copy engines, NCCL) at the
 sizes decoding uses and keeps the fastest per size; the start log and the doctor show the
 choice. The worker then measures the host (decode speed on a short and a 10k-token prompt,
-time to the first token) and the platform admits it only at 240 tokens per second or more
-with the first token within 1.5 s; `sudo sn46-miner qualify` repeats the measurement.
+time to the first token) and the platform admits it only at 200 tokens per second or more
+with the first token within 6 s; `sudo sn46-miner qualify` repeats the measurement.
 
 ### Minimal setup
 
