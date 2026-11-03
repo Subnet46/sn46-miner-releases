@@ -110,7 +110,19 @@ newer release is published and its time has come, the updater:
    host, and a fault report says why.
 
 Only a release signed with this installation's key and newer than the running one is
-installed. When the disk is too full, the update does not happen and `sudo sn46-miner
+installed.
+
+### The platform's address
+
+The miner reaches the platform at `wss://platform.instantnetwork.ai/v1/miners/connect`.
+Installations from before it was named wrote the old `167-172-24-161.sslip.io` address
+into `worker.env`; the updater moves that line to the new address: the first automatic
+update check of the release that brought the move rewrites it (the worker dials it from its
+next restart; a release from before reaches the platform there too), and every later update
+it installs moves it at the switch (the new release starts on it, and a rollback puts the
+old line back). Any other `SN46_PLATFORM_URL` you set yourself is left alone. `SN46_PLATFORM_CA=/path/to/platform.pem`
+makes the miner trust only the certificates in that file at the platform, for the socket
+and the fault reports, instead of the public certificate authorities. When the disk is too full, the update does not happen and `sudo sn46-miner
 status` says so. Releases other than the current and the previous one are removed.
 
 ### A release that changes the model
