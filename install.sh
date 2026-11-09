@@ -36,6 +36,16 @@ else
   KEY_URL="https://raw.githubusercontent.com/$REPO/main/release.pub"
   ASSETS_URL="https://github.com/$REPO/releases/download"
 fi
+# A mirror of the release files (<mirror>/v<version>/<file>, the miner's releases under
+# https://dl.instantnetwork.ai/releases/sn46-miner), tried before GitHub, whose
+# one connection is often slow. What it serves is checked like GitHub's: every file
+# against the signed manifest; a file that does not match is fetched again from GitHub.
+# SN46_RELEASE_MIRROR= (empty) turns it off; a local SN46_RELEASES copy never uses it.
+if [[ -n "${SN46_RELEASES:-}" || -n "${SN46_GITHUB_TOKEN:-}" ]]; then
+  MIRROR_URL=""
+else
+  MIRROR_URL="${SN46_RELEASE_MIRROR-https://dl.instantnetwork.ai/releases/sn46-miner}"
+fi
 # The release signing key and the digest of the verifier that checks it. A release under
 # another key is refused, and the verifier runs only if it is this exact binary. Changing
 # either means publishing a new installer. The SN46_TEST_* overrides exist for the
@@ -68,10 +78,15 @@ die()  {
 }
 auth=()
 fetch() { curl --proto '=https' --tlsv1.2 -fsSL --retry 5 --retry-all-errors --connect-timeout 15 "${auth[@]}" "$@"; }
-# One release file into $2, resumable; $3… are extra curl options (a progress bar).
+# One release file into $2, resumable; $3… are extra curl options (a progress bar). The
+# mirror first (when one is set and has not served a wrong file), then GitHub.
 asset() {
   local name="$1" target="$2" url
   shift 2
+  if [[ -n "$MIRROR_URL" ]] && curl --proto '=https' --tlsv1.2 -fL --retry 2 --connect-timeout 10 \
+      --speed-limit 1000000 --speed-time 60 "${@:--sS}" -C - -o "$target" "$MIRROR_URL/v$version/$name"; then
+    return 0
+  fi
   if [[ -n "${SN46_GITHUB_TOKEN:-}" ]]; then
     url="$(awk -v n="$name" '$1 == n { print $2 }' "$work/assets")"
     [[ -n "$url" ]] || return 1
@@ -195,9 +210,13 @@ for a in json.load(open(sys.argv[1]))["assets"]: print(a["name"], a["url"])' "$w
   fi
   # release-index.json is the signed index entry the release was published with; the
   # installed copy is what tells the updater this release's sequence.
+  # The release's metadata from GitHub itself (a few KB): the mirror only ever serves payload
+  # files, which are checked against this manifest.
+  mirror="$MIRROR_URL"; MIRROR_URL=""
   for file in release.json release.sig parts.json release-index.json; do
     asset "$file" "$release/$file" || die "release $version has no $file"
   done
+  MIRROR_URL="$mirror"
   # name, mode, sha256 and the parts of every payload file, from the manifest the
   # signature covers; a file over GitHub's 2 GiB limit comes in parts, joined here.
   python3 - "$release/release.json" "$release/parts.json" > "$work/files" <<'PY'
@@ -217,17 +236,28 @@ PY
     # A bar for the runtime (about 6 GB); the rest are small.
     show=()
     [[ "$name" != runtime.tar.zst ]] || { printf '  the runtime (about 6 GB)\n'; show=(--progress-bar); }
-    if [[ "${#pieces[@]}" == 1 && "${pieces[0]}" == "$name" ]]; then
-      asset "$name" "$target" "${show[@]}" || die "download of $name failed; run the installer again to resume"
-    else
-      for piece in "${pieces[@]}"; do
-        asset "$piece" "$release/parts/$piece" "${show[@]}" \
-          || die "download of $piece failed; run the installer again to resume"
-      done
-      for piece in "${pieces[@]}"; do cat -- "$release/parts/$piece"; done > "$target"
-    fi
-    sha256sum --check --status <<< "$sha  $target" \
-      || { rm -f -- "$target" "${pieces[@]/#/$release/parts/}"; die "$name does not match the release manifest; run the installer again"; }
+    for attempt in 1 2; do
+      if [[ "${#pieces[@]}" == 1 && "${pieces[0]}" == "$name" ]]; then
+        asset "$name" "$target" "${show[@]}" || die "download of $name failed; run the installer again to resume"
+      else
+        # The parts at once, each resumable: one connection to a release host is slow.
+        pids=()
+        for piece in "${pieces[@]}"; do
+          asset "$piece" "$release/parts/$piece" -sS & pids+=($!)
+        done
+        failed=0
+        for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+        # Every part's curl has ended (none keeps writing a part a rerun resumes) before this fails.
+        [[ "$failed" == 0 ]] || die "download of a part of $name failed; run the installer again to resume"
+        for piece in "${pieces[@]}"; do cat -- "$release/parts/$piece"; done > "$target"
+      fi
+      sha256sum --check --status <<< "$sha  $target" && break
+      rm -f -- "$target" "${pieces[@]/#/$release/parts/}"
+      # A mirror that served wrong bytes is not asked again; GitHub gets one more try.
+      [[ "$attempt" == 1 && -n "$MIRROR_URL" ]] || die "$name does not match the release manifest; run the installer again"
+      warn "$name from the mirror does not match the release manifest; fetching it from GitHub"
+      MIRROR_URL=""
+    done
     rm -f -- "${pieces[@]/#/$release/parts/}"
     chmod "$mode" "$target"
   done < "$work/files"

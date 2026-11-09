@@ -51,6 +51,14 @@ asks nothing, downloads nothing and starts the worker.
 Other cards are refused: the token check compares the miner's numbers with a verifier's bit
 for bit, and only this class reproduces them.
 
+### A C and C++ compiler (optional)
+
+The runtime carries the engine's CUDA extensions prebuilt and a cache of its Triton kernels,
+so a host normally compiles nothing. With `SN46_ENGINE_PREBUILT=false` in `worker.env` the
+engine compiles them on the host instead (the escape hatch if a prebuilt module misbehaves on
+a driver), which needs `cc` and `c++` (`apt-get install -y build-essential`; `CC`/`CXX` may
+point elsewhere). `host-check` and `doctor` report a missing compiler as a `compiler` warning.
+
 ### Card-to-card exchange and the speed floor
 
 The engine exchanges each layer's partial results between the four cards directly over
@@ -100,8 +108,10 @@ newer release is published and its time has come, the updater:
 
 1. downloads and verifies it while the worker keeps serving (an unchanged runtime is
    reused, so most updates download megabytes, not gigabytes; a release with a new
-   runtime, like the one that moved to TensorFold, downloads about 5 GB once and needs
-   60 GiB free, and its first start builds the engine's kernels for a few minutes);
+   runtime downloads about 5 GB once and needs 60 GiB free). Release files come from the
+   SN46 mirror (`dl.instantnetwork.ai`) first and from GitHub when the mirror fails or serves
+   anything that does not match the signed release; `SN46_RELEASE_MIRRORS=` (empty) in
+   `worker.env` uses GitHub only;
 2. drains the worker: the platform stops sending it requests, and it finishes the ones it
    has. Nothing in flight is cut off; if a request does not finish within 30 minutes the
    worker takes work again and the update is retried later;
